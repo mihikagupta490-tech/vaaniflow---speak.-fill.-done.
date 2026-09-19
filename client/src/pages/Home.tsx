@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ChangeEvent } from "react";
 import {
   ArrowRight,
   AudioLines,
+  Camera,
   Bot,
   Check,
   ChevronDown,
@@ -9,6 +10,7 @@ import {
   Edit3,
   FileCheck2,
   FileText,
+  FileUp,
   Globe2,
   Headphones,
   Languages,
@@ -18,6 +20,7 @@ import {
   PencilLine,
   Play,
   Plus,
+  Search,
   RotateCcw,
   Send,
   ShieldCheck,
@@ -30,6 +33,16 @@ import {
 } from "lucide-react";
 
 const languages = ["Auto Detect", "Hindi", "Marathi", "Bengali", "Tamil", "Telugu", "Gujarati", "Kannada", "Malayalam", "Punjabi", "English"];
+const formLibrary = [
+  { id: "admission", title: "College / Admission", meta: "8 detected fields", accent: "violet", icon: "CA" },
+  { id: "scholarship", title: "Scholarship", meta: "6 detected fields", accent: "mint", icon: "SC" },
+  { id: "government", title: "Government Services", meta: "10 detected fields", accent: "blue", icon: "GS" },
+  { id: "job", title: "Job Application", meta: "9 detected fields", accent: "coral", icon: "JA" },
+  { id: "bank", title: "Bank / KYC", meta: "12 detected fields", accent: "yellow", icon: "BK" },
+  { id: "insurance", title: "Insurance", meta: "7 detected fields", accent: "violet", icon: "IN" },
+  { id: "exam", title: "Exam Registration", meta: "8 detected fields", accent: "blue", icon: "ER" },
+  { id: "custom", title: "Custom Uploaded Form", meta: "Upload a photo or PDF", accent: "mint", icon: "+" },
+];
 const steps = [
   { number: "01", title: "Language", text: "Choose the language you think in.", icon: Languages, tone: "violet" },
   { number: "02", title: "Form", text: "Pick the form you need to complete.", icon: FileText, tone: "blue" },
@@ -52,6 +65,8 @@ const initialFields: FormField[] = [
   { label: "Preferred contact", value: "Phone call", status: "confirmed" },
   { label: "Emergency contact", value: "Add information", status: "missing", helper: "Vaani Assistant can ask you for this." },
 ];
+
+const detectedFormFields = ["Full name", "Date of birth", "Age", "Permanent address", "Phone number", "Email address", "Preferred contact", "Emergency contact"];
 
 function Logo() {
   return <a href="#top" className="brand" aria-label="VaaniFlow home"><span className="brand-mark" aria-hidden="true"><Waves size={18} strokeWidth={2.4} /><span className="brand-mark-dot" /></span><span>VaaniFlow</span></a>;
@@ -78,16 +93,62 @@ export default function Home() {
   const [activeStep, setActiveStep] = useState(2);
   const [submitted, setSubmitted] = useState(false);
   const [editingLabel, setEditingLabel] = useState<string | null>(null);
+  const [activeFormId, setActiveFormId] = useState("admission");
+  const [uploadedFormName, setUploadedFormName] = useState("college-admission-form.pdf");
+  const [selectedField, setSelectedField] = useState("Permanent address");
+  const [workspaceTranscript, setWorkspaceTranscript] = useState("");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [formStates, setFormStates] = useState<Record<string, FormField[]>>({ admission: initialFields });
 
-  const completedCount = useMemo(() => fields.filter((field) => field.status === "confirmed").length, [fields]);
+  const activeFields = formStates[activeFormId] || fields;
+  const completedCount = useMemo(() => activeFields.filter((field) => field.status === "confirmed").length, [activeFields]);
   const selectedLanguageLabel = selectedLanguage === "Auto Detect" ? "Auto Detect" : selectedLanguage;
+
+  const updateActiveFields = (nextFields: FormField[]) => {
+    setFields(nextFields);
+    setFormStates((current) => ({ ...current, [activeFormId]: nextFields }));
+  };
+
+  const switchForm = (id: string) => {
+    const nextFields = formStates[id] || initialFields.map((field) => ({ ...field, status: id === "bank" ? "missing" : field.status }));
+    setActiveFormId(id);
+    setFields(nextFields);
+    setSubmitted(false);
+    setSelectedField(nextFields.find((field) => field.status !== "confirmed")?.label || nextFields[0].label);
+  };
+
+  const handleFormUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setUploadedFormName(file.name);
+    setActiveFormId("custom");
+    setIsAnalyzing(true);
+    window.setTimeout(() => setIsAnalyzing(false), 1100);
+    setSelectedField("Permanent address");
+  };
+
+  const fillFromWorkspace = () => {
+    const answer = workspaceTranscript.trim();
+    if (!answer) return;
+    const nameMatch = answer.match(/(?:my name is|mera naam|name is)\s+([a-zA-Z ]+)/i);
+    const addressMatch = answer.match(/(?:address|pata|permanent address)\s+(?:is|hai)?\s*(.+)/i);
+    const nextFields = activeFields.map((field) => {
+      if (selectedField === "Full name" && nameMatch) return { ...field, value: nameMatch[1].trim(), status: "confirmed" as FieldStatus };
+      if (selectedField === "Permanent address" && addressMatch && field.label === "Address") return { ...field, value: addressMatch[1].trim(), status: "confirmed" as FieldStatus, helper: undefined };
+      if (field.label === selectedField) return { ...field, value: answer, status: "confirmed" as FieldStatus, helper: undefined };
+      return field;
+    });
+    updateActiveFields(nextFields);
+    setWorkspaceTranscript("");
+    setActiveStep(4);
+  };
 
   const handleMic = () => {
     setIsListening((current) => !current);
     setActiveStep(isListening ? 4 : 3);
     if (!isListening) {
       window.setTimeout(() => {
-        setFields((current) => current.map((field) => field.label === "Emergency contact" ? { ...field, status: "review", value: "Rahul Kulkarni", helper: "Please confirm this information." } : field));
+      updateActiveFields(fields.map((field) => field.label === "Emergency contact" ? { ...field, status: "review", value: "Rahul Kulkarni", helper: "Please confirm this information." } : field));
         setActiveStep(4);
       }, 900);
     }
@@ -100,7 +161,7 @@ export default function Home() {
     window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
   };
 
-  const confirmField = (label: string) => setFields((current) => current.map((field) => field.label === label ? { ...field, status: "confirmed", helper: undefined } : field));
+  const confirmField = (label: string) => updateActiveFields(fields.map((field) => field.label === label ? { ...field, status: "confirmed", helper: undefined } : field));
   const speakAgain = (label: string) => {
     setAssistantMessages((current) => [...current, { from: "ai", text: `Let’s try ${label} again. Speak naturally when you’re ready.` }]);
     setShowAssistant(true);
@@ -109,7 +170,32 @@ export default function Home() {
   const sendAssistantMessage = () => {
     const value = assistantText.trim();
     if (!value) return;
-    setAssistantMessages((current) => [...current, { from: "user", text: value }, { from: "ai", text: "Got it. I’ll keep that in mind and help you review the next field." }]);
+    const lower = value.toLowerCase();
+    const nameMatch = value.match(/(?:my name is|mera naam|name is)\s+([a-zA-Z ]+)/i);
+    let response = `For ${selectedField}, ${selectedField === "Permanent address" ? "tell me your house number, area, city, state and PIN code." : "you can answer by voice or type the information directly."}`;
+    if (nameMatch) {
+      const nextFields = fields.map((field) => field.label === "Full name" ? { ...field, value: nameMatch[1].trim(), status: "confirmed" as FieldStatus } : field);
+      updateActiveFields(nextFields);
+      setSelectedField("Date of birth");
+      response = `I found a Full Name in your message and placed “${nameMatch[1].trim()}” into that field. The next field to complete is Date of birth.`;
+    } else if (lower.includes("samajh") || lower.includes("explain") || lower.includes("what is") || lower.includes("ye wala")) {
+      response = selectedField === "Permanent address" ? "Permanent address means the place where you live long-term. Include your house number, area, city, state and PIN code." : `The ${selectedField.toLowerCase()} field is asking for the ${selectedField.toLowerCase()} shown on this form.`;
+    } else if (lower.includes("skip") || lower.includes("optional")) {
+      response = `${selectedField} is ${selectedField === "Emergency contact" ? "optional for this example, so you can skip it and come back later" : "important to complete before submitting"}.`;
+    } else if (lower.includes("wrong") || lower.includes("galat") || lower.includes("change") || lower.includes("pehle")) {
+      response = `I’ve kept the form editable. Tap ${selectedField} in the document preview and tell me the corrected information.`;
+    } else if (lower.includes("same address")) {
+      const address = fields.find((field) => field.label === "Address")?.value || "your saved address";
+      updateActiveFields(fields.map((field) => field.label === selectedField ? { ...field, value: address, status: "confirmed" as FieldStatus } : field));
+      response = `I reused ${address} for ${selectedField}. Please review it before submitting.`;
+    } else if (lower.includes("remaining") || lower.includes("bacha") || lower.includes("left")) {
+      const remaining = fields.filter((field) => field.status !== "confirmed").map((field) => field.label).join(", ");
+      response = remaining ? `The remaining fields are: ${remaining}. The first one to review is ${remaining.split(", ")[0]}.` : "All fields are complete. You can review the form and submit it.";
+    } else if (lower.includes("read")) {
+      response = `I can read this section aloud in ${selectedLanguageLabel}. The selected field is ${selectedField}.`;
+      readFormAloud();
+    }
+    setAssistantMessages((current) => [...current, { from: "user", text: value }, { from: "ai", text: response }]);
     setAssistantText("");
   };
 
@@ -134,6 +220,11 @@ export default function Home() {
       <section className="journey-bar" aria-label="VaaniFlow journey"><div className="container journey-steps">{steps.map((step, index) => <button key={step.number} className={index === activeStep ? "journey-step active" : index < activeStep ? "journey-step complete" : "journey-step"} onClick={() => setActiveStep(index)}><span>{index < activeStep ? <Check size={13} /> : step.number}</span><strong>{step.title}</strong>{index < steps.length - 1 && <ArrowRight size={14} className="journey-arrow" />}</button>)}</div></section>
 
       <section className="language-strip" id="languages"><div className="container language-strip-inner"><span className="language-intro"><Languages size={16} /> Works in the language you think in</span><div className="language-list">{languages.map((language) => <button key={language} className={selectedLanguage === language ? "language-tag active" : "language-tag"} onClick={() => setSelectedLanguage(language)}>{language}</button>)}</div></div></section>
+
+      <section className="workspace-section" id="workspace"><div className="container"><div className="workspace-heading"><div><div className="eyebrow">The form is the interface</div><h2>Choose a form. <em>Talk to the fields.</em></h2><p>Vaani understands the document first, then maps what you say into the actual field you selected.</p></div><label className="upload-form-button"><FileUp size={16} /> Upload / scan form<input type="file" accept="image/*,.pdf" onChange={handleFormUpload} /></label></div>
+        <div className="form-library" aria-label="Form library"><div className="library-label"><span>Form library</span><small>{formLibrary.length} ready-to-use templates</small></div><div className="library-grid">{formLibrary.map((form) => <button key={form.id} className={activeFormId === form.id ? `library-card active ${form.accent}` : `library-card ${form.accent}`} onClick={() => switchForm(form.id)}><span className="library-icon">{form.icon}</span><span><strong>{form.title}</strong><small>{form.id === "custom" && uploadedFormName ? uploadedFormName : form.meta}</small></span>{activeFormId === form.id && <Check size={15} />}</button>)}</div></div>
+        <div className="workspace-grid"><div className="document-card"><div className="document-head"><div><span className="mini-label">{isAnalyzing ? "Analyzing uploaded form" : "AI understood this form"}</span><strong>{activeFormId === "custom" ? uploadedFormName : formLibrary.find((form) => form.id === activeFormId)?.title}</strong></div><span className={isAnalyzing ? "scan-status scanning" : "scan-status"}><span /> {isAnalyzing ? "Scanning fields" : `${activeFields.length} fields detected`}</span></div><div className="document-preview"><div className="paper-toolbar"><span><FileText size={14} /> Original form preview</span><span><Search size={14} /> Tap a highlighted field</span></div><div className="paper-sheet"><div className="paper-title">{activeFormId === "custom" ? uploadedFormName.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ").toUpperCase() : formLibrary.find((form) => form.id === activeFormId)?.title?.toUpperCase()}</div><div className="paper-line short" /><div className="paper-line" /><div className="paper-field-grid">{detectedFormFields.slice(0, 6).map((field) => <button key={field} className={selectedField === field ? "paper-field selected" : "paper-field"} onClick={() => setSelectedField(field)}><span>{field}</span><i>{(() => { const mappedField = fields.find((item) => item.label === field || (field === "Permanent address" && item.label === "Address")); return mappedField?.status === "missing" ? "Tap to answer" : mappedField?.value || "Tap to answer"; })()}</i></button>)}</div><div className="paper-signature"><span>Applicant signature</span><span>________________</span></div></div></div></div><div className="field-coach"><div className="coach-head"><span className="assistant-mini-avatar"><Sparkles size={12} /></span><div><strong>{selectedField}</strong><small>Detected field · {selectedLanguageLabel}</small></div><button aria-label="Explain selected field"><CircleHelp size={16} /></button></div><div className="coach-explanation">{selectedField === "Permanent address" ? "This field asks for the address where you permanently live. You can tell me your house number, area, city, state and PIN code." : `This field asks for your ${selectedField.toLowerCase()}. You can answer by voice or type it below.`}</div><div className="extraction-card"><span className="extraction-label"><WandSparkles size={13} /> AI extraction</span><p>{workspaceTranscript ? `“${workspaceTranscript}”` : "Your answer will appear here, then Vaani maps it to the selected field."}</p><div className="mapping-row"><span>Answer</span><ArrowRight size={14} /><strong>{selectedField}</strong></div></div><div className="workspace-composer"><button className={isListening ? "assistant-mic active" : "assistant-mic"} onClick={handleMic} aria-label="Speak answer"><Mic size={18} /></button><input value={workspaceTranscript} onChange={(event) => setWorkspaceTranscript(event.target.value)} placeholder="Say or type your answer..." aria-label="Answer selected form field" onKeyDown={(event) => event.key === "Enter" && fillFromWorkspace()} /><button className="send-button" onClick={fillFromWorkspace} aria-label="Fill selected field"><ArrowRight size={17} /></button></div><button className="explain-link" onClick={() => setShowAssistant(true)}>Ask Vaani what this means <MessageCircle size={14} /></button></div></div>
+      </div></section>
 
       <section className="flow-section" id="how-it-works"><div className="container"><div className="section-heading centered-heading"><div className="eyebrow eyebrow-light">A better way to fill forms</div><h2>From voice to <span>done.</span> <br className="desktop-break" />Without the paperwork anxiety.</h2><p>Six simple steps that make every digital form feel a little more human.</p></div><div className="steps-grid">{steps.map(({ number, title, text, icon: Icon, tone }) => <article className="step-card" key={number}><div className={`step-icon tone-${tone}`}><Icon size={19} strokeWidth={2.1} /></div><div className="step-number">{number}</div><h3>{title}</h3><p>{text}</p><ArrowRight className="step-arrow" size={17} /></article>)}</div></div></section>
 
